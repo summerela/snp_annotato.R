@@ -14,6 +14,7 @@
 ## Setup  ##
 ############
 source("user_config.R")
+source("path_config.R")
 
 ##check if output directory exists, if not, create
 dir.create(file.path(out_dir))
@@ -49,22 +50,29 @@ lapply(packages, load_reqs)
 #######################
 ## Prep Reference(s) ##
 #######################
-##add "chr" to chromosome name for matching with vcf files
-system(paste("zcat <", kav_path, 
-             "| awk 'BEGIN{OFS=\"\t\"} {if ($1 !~ /^#/) {printf \"chr\"} print $0}' | bgzip >", paste(kaviar_out, "kav_edit.vcf.gz", sep="/"), 
-             sep=" "), wait=TRUE)
+##requires ref genome version/chr/coords
+kaviar <- readVcf(paste(ref_db, "Kaviar_test.vcf.gz", sep="/"), "hg19")
 
-##index the kav file
-system(paste("tabix", paste(kaviar_out, "kav_edit.vcf.gz", sep="/"), sep=" "), wait=TRUE)
+##rename seqlevels so they can be compared
+kaviar <- renameSeqlevels(kaviar, c("1"="chr1"))
 
-
-
-
-
+##make database of need information
+kav.df = data.frame(kav_chr= as.character(head(seqnames(kaviar))), start = as.integer(start(head(ranges(kaviar)))), 
+                    end = as.integer(end(head(ranges(kaviar)))), kav_ref = as.character(head(ref(kaviar))), 
+                    kav_alt = as.character(head(alt(kaviar))), kav_annot = head(info(kaviar)))
 
 
+test.df = data.frame(one=as.character(head(seqnames(kaviar))), 
+                     two=as.integer(start(head(ranges(kaviar)))))
 
+as.character()
 
+test.df$ref = kav_ref
+test.df$alt = kav_alt
+test.df$end = as.integer(end(head(ranges(kaviar))))
+test.df$annot = kav_annot
+
+test.df
 
 
 ##unzip vcf file and create copy to convert to txt
@@ -77,9 +85,7 @@ ref.df = read.table(paste(kaviar_out, lapply(strsplit(basename(ref_db), "[.]"),
 colnames(ref.df) = c("CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO")
 head(ref.df, 20)
 
-kav = readVcf("./Kaviar_test.vcf.gz", genome="hg19")
 
-info(header(kav))
 
 
 
@@ -105,6 +111,14 @@ vcf_hdr
 ######################
 ### unused snippets ##
 ######################
+
+##add "chr" to chromosome name for matching with vcf files
+system(paste("zcat <", kav_path, 
+             "| awk 'BEGIN{OFS=\"\t\"} {if ($1 !~ /^#/) {printf \"chr\"} print $0}' | bgzip >", paste(kaviar_out, "kav_edit.vcf.gz", sep="/"), 
+             sep=" "), wait=TRUE)
+
+##index the kav file
+system(paste("tabix", paste(kaviar_out, "kav_edit.vcf.gz", sep="/"), sep=" "), wait=TRUE)
 ##unzip vcf file and create copy to convert to txt
 system(paste("gzcat < ", vcf, " > ", 
       paste(kaviar_out, lapply(strsplit(basename(vcf), "[.]"), 
@@ -122,8 +136,7 @@ bgzip test.vcf
 ##requires ref genome version/chr/coords
 kaviar = readVcf("/Users/selasady/Documents/Variants/test.vcf.gz", "hg19")
 
-##rename seqlevels so they can be compared
-kaviar <- renameSeqlevels(kaviar, c("1"="chr1"))
+
 
 ##########################
 ## classes and accessor ##
