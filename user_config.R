@@ -1,16 +1,16 @@
 ## User config ## 
 
 ##path to output base directory
-out_dir = "./"
+out_dir = "./testing"
 
 ##comma separated (no spaces) path to vcf files to annotate
-vcf_dir = "./"
+vcf_dir = "/Users/selasady/snp_annotato.R/testing"
 
-##reference db's (comma sep, no space)
-ref_db= "Kaviar"
-
-##path to reference db dir
-ref_dir = "~/snp_annotator/ref_db/"
+##comma sep list of annotation db's to use
+refs= "Kaviar"
 
 ##max cores to use
 CPU = "5"
+
+##human reference build
+humie_ref = "hg19"

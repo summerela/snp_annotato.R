@@ -28,7 +28,7 @@ setwd(out_dir)
 
 ##list required packages
 ##installation issues = install through biocLite()
-packages <- c("VariantAnnotation", "parallel")
+packages <- c("VariantAnnotation")
 ##create function to install and/or load packages 
 load_reqs <- function(lib_arg){
   if (require(lib_arg, character.only=TRUE)== TRUE){
@@ -44,71 +44,131 @@ lapply(packages, load_reqs)
 ##TODO 
 ## pipeline for complete genomics
 ## pipeline for illumina
-##add option for list of reference db
+##add param to read in only required fields
 ##add option for single vcf instead of directory 
 
 #######################
 ## Prep Reference(s) ##
 #######################
-##requires ref genome version/chr/coords
-kaviar <- readVcf(paste(ref_db, "Kaviar_test.vcf.gz", sep="/"), "hg19")
+##RUNONCE only use when updating kaviar db
+##convert commas in kaviar REF to periods to it doesn't break R
+#paste("zcat <", kav_db, "| awk -F $'\t' 'BEGIN {OFS = FS} {gsub(\",\", \".\", $5);print}' | bgzip > Kav_DB.vcf.gz")
+
+
+
+?indexTabix
+idx = indexTabix("/Users/selasady/snp_annotato.R/ref_db/Kaviar.vcf.gz", format="vcf")
+tab = TabixFile("/Users/selasady/snp_annotato.R/ref_db/Kaviar.vcf.gz", idx)
+
+rng <- GRanges(seqnames="1", ranges=IRanges(start=c(39998057, 39998057), end=c(39999366, 39999366)))
+
+kav_ranged = readVcf(tab, "hg19", param=rng)
+ranges(kav_ranged)
+
+writeVcf(kav_ranged, filename="/Users/selasady/snp_annotato.R/Kav_ranged.vcf")
+
+?writeVcf
+
+
+##read in edited kaviar vcf and human ref
+kaviar <- readVcf("./kaviar/Kav_DB.vcf.gz", humie_ref)
 
 ##rename seqlevels so they can be compared
 kaviar <- renameSeqlevels(kaviar, c("1"="chr1"))
 
-##make database of need information
-kav.df = data.frame(kav_chr= as.character(head(seqnames(kaviar))), start = as.integer(start(head(ranges(kaviar)))), 
-                    end = as.integer(end(head(ranges(kaviar)))), kav_ref = as.character(head(ref(kaviar))), 
-                    kav_alt = as.character(head(alt(kaviar))), kav_annot = head(info(kaviar)))
+##make data frame of kav info
+kav.df = data.frame(chr = as.character(head(seqnames(kaviar))), start = head(start(ranges(kaviar))), end=as.integer(end(head(ranges(kaviar)))),
+                    ref = as.character(head(ref(kaviar))), alt = as.character(CharacterList(head(alt(kaviar)))))
 
+##add column of annotations
+annot = head(info(kaviar))
+annots = paste(as.character(annot$AF), as.character(annot$AC), as.character(annot$AN), as.character(annot$END), as.character(annot$DS), sep="|")
+kav.df$annots = annots
 
-test.df = data.frame(one=as.character(head(seqnames(kaviar))), 
-                     two=as.integer(start(head(ranges(kaviar)))))
-
-as.character()
-
-test.df$ref = kav_ref
-test.df$alt = kav_alt
-test.df$end = as.integer(end(head(ranges(kaviar))))
-test.df$annot = kav_annot
-
-test.df
-
-
-##unzip vcf file and create copy to convert to txt
-system(paste("gzcat < ", ref_db, " > ", 
-             paste(kaviar_out, lapply(strsplit(basename(ref_db), "[.]"), 
-                                      function(x) paste(x[1], x[2], sep=".")), sep="/"), sep=""), wait=TRUE)
-##read in uncompressed vcf file
-ref.df = read.table(paste(kaviar_out, lapply(strsplit(basename(ref_db), "[.]"), 
-                                           function(x) paste(x[1], x[2], sep=".")), sep="/"), sep="\t")
-colnames(ref.df) = c("CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO")
-head(ref.df, 20)
-
-
-
-
+##replace "NA" in annotation with blank
+kav.df$annots = gsub("NA", "", as.character(kav.df$annots))
 
 ##################################
 ## Gather VCF files to process  ## 
 ##################################
-##data frame *.vcf.gz in directory path
+##data frame *.vcf.gz files in directory path
+vcf.df <- data.frame(path=list.files(vcf_dir, pattern="*.vcf.gz$", full=TRUE))
 
-vcf_dir.df <- data.frame(path=list.files(vcf_dir, pattern="*.vcf.gz$", full=TRUE))
+test_vcf = vcf.df$path[1]
 
+ranges(vcf)
 
-vcf = "../../cg_test.vcf.gz"
-
-##read in the vcf file header info
-vcf_hdr = info(scanVcfHeader(vcf))
-vcf_hdr
-
+##read in vcf file(s)
+vcf <- readVcf(as.character(test_vcf), humie_ref)
 
 
 
+##data frame vcf info
+head(samples(vcf))
+
+?subsetByOverlaps
+colnames(vcf)
+rownames(vcf)
+
+test =subsetByOverlaps(ranges(vcf), ranges(kaviar))
+
+test
+
+head(ranges(vcf))
+head(ranges(kaviar))
 
 
 ######################
+
+
+
+Two questions therefore:
+  > 1) how do you add an INFO field in a way that doesn?t generate error
+> from within R
+
+> fl <- system.file("extdata", "ex2.vcf",
+                    package="VariantAnnotation")
+> vcf <- readVcf(fl, "hg19")
+
+Original info variables.
+
+> vcf <- readVcf(fl, "hg19")
+> names(info(vcf))
+[1] "NS" "DP" "AF" "AA" "DB" "H2"
+> dim(info(vcf))
+[1] 5 6
+
+Add new variables with the info<- setter.
+
+> newInfo <- info(vcf)
+> newInfo$foo <- 1:5
+> info(vcf) <- newInfo
+> names(info(vcf))
+[1] "NS"  "DP"  "AF"  "AA"  "DB"  "H2"  "foo"
+> info(vcf)$foo
+[1] 1 2 3 4 5
+
+
+Query VCF class in R:
+  
+  To match on position I'd use subsetByOverlaps() on the VCF GRanges if
+you want a GRanges back. If you only want a count of the hits (i.e.,
+location if present) then use countOverlaps(). This is essentially
+what
+you're doing now but if chromosome and/or strand are important then
+this
+is the best way to go. Others free to chime in.
+
+You could gain a little performance if the data are large and
+chromosome
+and strand are not important. Using countOverlaps() on the ranges()
+extracted from the GRanges will save a some time on big data.
+
+To match on variant name I would match on the colnames(vcf) as you are
+doing.
+
+Are any of these operations taking prohibitively long? Please let me
+know if they are.
 ### unused snippets ##
 ######################
 
@@ -128,61 +188,8 @@ vcf.df = read.csv(paste(kaviar_out, lapply(strsplit(basename(vcf), "[.]"),
                                             function(x) paste(x[1], x[2], sep=".")), sep="/"), sep="\t")
 dim(vcf.df)
 
-##convert commas in kaviar to periods to it doesn't break R
-zcat < Kaviar_test.vcf.gz | awk -F $'\t' 'BEGIN {OFS = FS} {gsub(",", "_", $5);print}' > test.vcf
-bgzip test.vcf
-
-## KAVIAR ##
-##requires ref genome version/chr/coords
-kaviar = readVcf("/Users/selasady/Documents/Variants/test.vcf.gz", "hg19")
 
 
-
-##########################
-## classes and accessor ##
-##########################
-##Chr, range, REF, ALT, QUAL, FILTER  
-pos_info = rowData(vcf)
-pos_info
-
-vcf.df = data.frame(chr = head(seqnames(vcf)), start=head(start(vcf)), 
-                  end= head(end(vcf)), ref=as.character(refs), alt=as.character(unlist(alts)))
-
-kav.df = data.frame(chr = head(seqnames(kaviar)), start=head(start(kaviar)), 
-                    end= head(end(kaviar)))
-kav.df                    
-                    , ref=as.character(k_refs), alt=as.character(unlist(k_alts)))
-
-rowData(vcf)
-rowData(kaviar)
-unlist(k_alts)
-k_alts
-
-k_refs = head(ref(kaviar))
-k_alts = head(alt(kaviar))
-
-as.character(unlist(k_alts))
-k_alts
-
-names(k_alts) <- k_alts
-
-refs = head(ref(vcf))
-alts = head(alt(vcf))
-
-anno.df = as(anno, "DataFrame")
-elementMetadata(vcf) = cbind(vcf.df, anno.df)
-
-##fxn annots
-annot_info = info(vcf)
-
-##header descriptions
-hdr = info(header(vcf))
-
-##genotype descrips
-gt_info = geno(header(vcf))
-
-##samples
-samples = samples(header(vcf))
 
 
 
