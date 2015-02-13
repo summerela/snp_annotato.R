@@ -52,41 +52,29 @@ lapply(packages, load_reqs)
 #######################
 ##RUNONCE only use when updating kaviar db
 ##convert commas in kaviar REF to periods to it doesn't break R
-#paste("zcat <", kav_db, "| awk -F $'\t' 'BEGIN {OFS = FS} {gsub(\",\", \".\", $5);print}' | bgzip > Kav_DB.vcf.gz")
-
-
-
-?indexTabix
-idx = indexTabix("/Users/selasady/snp_annotato.R/ref_db/Kaviar.vcf.gz", format="vcf")
-tab = TabixFile("/Users/selasady/snp_annotato.R/ref_db/Kaviar.vcf.gz", idx)
-
-rng <- GRanges(seqnames="1", ranges=IRanges(start=c(39998057, 39998057), end=c(39999366, 39999366)))
-
-kav_ranged = readVcf(tab, "hg19", param=rng)
-ranges(kav_ranged)
-
-writeVcf(kav_ranged, filename="/Users/selasady/snp_annotato.R/Kav_ranged.vcf")
-
-?writeVcf
-
+system(paste("zcat <", kav_db, "| awk -F $'\t' 'BEGIN {OFS = FS} {gsub(\",\", \".\", $5);print}' | bgzip > Kav_DB_edit.vcf.gz"), wait=TRUE)
 
 ##read in edited kaviar vcf and human ref
-kaviar <- readVcf("./kaviar/Kav_DB.vcf.gz", humie_ref)
+kaviar <- readVcf("Kav_DB_edit.vcf.gz", humie_ref)
 
-##rename seqlevels so they can be compared
+##rename chromosomes to match with vcf files
 kaviar <- renameSeqlevels(kaviar, c("1"="chr1"))
 
 ##make data frame of kav info
-kav.df = data.frame(chr = as.character(head(seqnames(kaviar))), start = head(start(ranges(kaviar))), end=as.integer(end(head(ranges(kaviar)))),
-                    ref = as.character(head(ref(kaviar))), alt = as.character(CharacterList(head(alt(kaviar)))))
+kav.df = data.frame(name= as.character(head(names(rowData(kaviar)))),chr = as.character(head(seqnames(kaviar))), start = head(start(ranges(kaviar))), end=as.integer(end(head(ranges(kaviar)))),
+                    ref = as.character(head(ref(kaviar))), alt = as.character(CharacterList(head(alt(kaviar)))), AF=unlist(head(info(kaviar)$AF)), AC=unlist(head(info(kaviar)$AC)),
+                    AN=head(unlist(info(kaviar)$AN)), END = head(unlist(info(kaviar)$END)), DS = head(unlist(info(kaviar)$DS)))
 
-##add column of annotations
-annot = head(info(kaviar))
-annots = paste(as.character(annot$AF), as.character(annot$AC), as.character(annot$AN), as.character(annot$END), as.character(annot$DS), sep="|")
-kav.df$annots = annots
+# ##add column of annotations
+# annot = head(info(kaviar))
+# annots = paste(as.character(annot$AF), as.character(annot$AC), as.character(annot$AN), as.character(annot$END), as.character(annot$DS), sep="|")
+# kav.df$annots = annots
 
 ##replace "NA" in annotation with blank
-kav.df$annots = gsub("NA", "", as.character(kav.df$annots))
+#kav.df$annots = gsub("NA", "", as.character(kav.df$annots))
+
+##replace periods in Ref with "|"
+#kav.df$alt = gsub("[.]", "|", as.character(kav.df$alt))
 
 ##################################
 ## Gather VCF files to process  ## 
@@ -94,81 +82,54 @@ kav.df$annots = gsub("NA", "", as.character(kav.df$annots))
 ##data frame *.vcf.gz files in directory path
 vcf.df <- data.frame(path=list.files(vcf_dir, pattern="*.vcf.gz$", full=TRUE))
 
-test_vcf = vcf.df$path[1]
-
-ranges(vcf)
+test_vcf = as.character(vcf.df$path[1])
 
 ##read in vcf file(s)
-vcf <- readVcf(as.character(test_vcf), humie_ref)
-
-
+vcf <- readVcf(test_vcf, humie_ref)
 
 ##data frame vcf info
-head(samples(vcf))
+vcf.df = data.frame(name= as.character(head(names(rowData(vcf)))), chr = as.character(head(seqnames(vcf))), start = head(start(ranges(vcf))), end=as.integer(end(head(ranges(vcf)))),
+                    ref = as.character(head(ref(vcf))), alt = as.character(CharacterList(head(alt(vcf)))), kav_annots="NA")
 
-?subsetByOverlaps
-colnames(vcf)
-rownames(vcf)
+#################
+## Match SNP's ##
+#################
+##generate list of identical matches, not including "alt"
+match1 = merge(kav.df, vcf.df, by=c("chr", "start", "end", "ref"))
+match1
+##compare alts (separate to account for lists)
+matches = unique(match1[unlist(sapply(match1$alt.x, grep, match1$alt.y)),])
+colnames(matches) = c("chr", "start", "end", "ref", "kav_name", "kav_alt", "vcf_name", "vcf_alt", "kav_AF", "kav_AC", "kav_AN", "kav_END", "kav_DS")
+matches
 
-test =subsetByOverlaps(ranges(vcf), ranges(kaviar))
+##for these guys
+vcf.df
 
-test
+vcf.df[match(matches$vcf_name, vcf.df$name),]
+  
+kav.df[match(matches$kav_name, kav.df$name),]
 
-head(ranges(vcf))
-head(ranges(kaviar))
+##add this
+
+colnames(kav.df)
 
 
-######################
-
-
-
-Two questions therefore:
-  > 1) how do you add an INFO field in a way that doesn?t generate error
-> from within R
-
-> fl <- system.file("extdata", "ex2.vcf",
-                    package="VariantAnnotation")
-> vcf <- readVcf(fl, "hg19")
-
-Original info variables.
-
-> vcf <- readVcf(fl, "hg19")
-> names(info(vcf))
-[1] "NS" "DP" "AF" "AA" "DB" "H2"
-> dim(info(vcf))
-[1] 5 6
+##colnames info
+names(info(vcf))
+dim(info(vcf)) #170 26
 
 Add new variables with the info<- setter.
 
-> newInfo <- info(vcf)
-> newInfo$foo <- 1:5
-> info(vcf) <- newInfo
-> names(info(vcf))
-[1] "NS"  "DP"  "AF"  "AA"  "DB"  "H2"  "foo"
-> info(vcf)$foo
-[1] 1 2 3 4 5
+newInfo <- info(vcf)
+newInfo$foo <- 1:5
+info(vcf) <- newInfo
+names(info(vcf))
+info(vcf)$foo
 
 
-Query VCF class in R:
-  
-  To match on position I'd use subsetByOverlaps() on the VCF GRanges if
-you want a GRanges back. If you only want a count of the hits (i.e.,
-location if present) then use countOverlaps(). This is essentially
-what
-you're doing now but if chromosome and/or strand are important then
-this
-is the best way to go. Others free to chime in.
 
-You could gain a little performance if the data are large and
-chromosome
-and strand are not important. Using countOverlaps() on the ranges()
-extracted from the GRanges will save a some time on big data.
 
-To match on variant name I would match on the colnames(vcf) as you are
-doing.
-
-Are any of these operations taking prohibitively long? Please let me
-know if they are.
+######################
 ### unused snippets ##
 ######################
 
@@ -189,7 +150,13 @@ vcf.df = read.csv(paste(kaviar_out, lapply(strsplit(basename(vcf), "[.]"),
 dim(vcf.df)
 
 
-
+##building of ranged kaviar file
+idx = indexTabix("/Users/selasady/snp_annotato.R/ref_db/Kaviar.vcf.gz", format="vcf")
+tab = TabixFile("/Users/selasady/snp_annotato.R/ref_db/Kaviar.vcf.gz", idx)
+rng <- GRanges(seqnames="1", ranges=IRanges(start=c(39998057, 39998057), end=c(39999366, 39999366)))
+kav_ranged = readVcf(tab, "hg19", param=rng)
+ranges(kav_ranged)
+writeVcf(kav_ranged, filename="/Users/selasady/snp_annotato.R/Kav_ranged.vcf")
 
 
 
