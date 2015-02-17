@@ -28,7 +28,7 @@ setwd(out_dir)
 
 ##list required packages
 ##installation issues = install through biocLite()
-packages <- c("VariantAnnotation")
+packages <- c("VariantAnnotation", "IRanges")
 ##create function to install and/or load packages 
 load_reqs <- function(lib_arg){
   if (require(lib_arg, character.only=TRUE)== TRUE){
@@ -52,79 +52,103 @@ lapply(packages, load_reqs)
 #######################
 ##RUNONCE only use when updating kaviar db
 ##convert commas in kaviar REF to periods to it doesn't break R
-system(paste("zcat <", kav_db, "| awk -F $'\t' 'BEGIN {OFS = FS} {gsub(\",\", \".\", $5);print}' | bgzip > Kav_DB_edit.vcf.gz"), wait=TRUE)
+#system(paste("zcat <", kav_db, "| awk -F $'\t' 'BEGIN {OFS = FS} {gsub(\",\", \".\", $5);print}' | bgzip > Kav_DB_edit.vcf.gz"), wait=TRUE)
+#paste("zcat <", test_vcf, "| awk -F $'\t' 'BEGIN {OFS = FS} {gsub(\",\", \".\", $5);print}' | bgzip > test_edit.vcf.gz")
 
 ##read in edited kaviar vcf and human ref
-kaviar <- readVcf("Kav_DB_edit.vcf.gz", humie_ref)
+kaviar <- readVcf("/Documents/snp_annotato.R/ref_db/kav_edit.vcf.gz", humie_ref)
 
 ##rename chromosomes to match with vcf files
 kaviar <- renameSeqlevels(kaviar, c("1"="chr1"))
 
-##make data frame of kav info
-kav.df = data.frame(name= as.character(head(names(rowData(kaviar)))),chr = as.character(head(seqnames(kaviar))), start = head(start(ranges(kaviar))), end=as.integer(end(head(ranges(kaviar)))),
-                    ref = as.character(head(ref(kaviar))), alt = as.character(CharacterList(head(alt(kaviar)))), AF=unlist(head(info(kaviar)$AF)), AC=unlist(head(info(kaviar)$AC)),
-                    AN=head(unlist(info(kaviar)$AN)), END = head(unlist(info(kaviar)$END)), DS = head(unlist(info(kaviar)$DS)))
+##make data frame of needed kaviar fields
+kav.df = cbind(chr= seqlevels(kaviar), as.data.frame(ranges(kaviar), stringsToFactors=FALSE), 
+               ref=as.character(values(rowData(kaviar))[["REF"]]), alt=values(rowData(kaviar))[["ALT"]], info(kaviar))
+##convert alts col to character list for matching
+kav.df$alt.value = as.character(kav.df$alt.value)
 
-# ##add column of annotations
-# annot = head(info(kaviar))
-# annots = paste(as.character(annot$AF), as.character(annot$AC), as.character(annot$AN), as.character(annot$END), as.character(annot$DS), sep="|")
-# kav.df$annots = annots
-
-##replace "NA" in annotation with blank
-#kav.df$annots = gsub("NA", "", as.character(kav.df$annots))
-
-##replace periods in Ref with "|"
-#kav.df$alt = gsub("[.]", "|", as.character(kav.df$alt))
+#alt <CN0> what to do with CNV? 
 
 ##################################
 ## Gather VCF files to process  ## 
 ##################################
 ##data frame *.vcf.gz files in directory path
-vcf.df <- data.frame(path=list.files(vcf_dir, pattern="*.vcf.gz$", full=TRUE))
+vcf_path <- data.frame(path=list.files(vcf_dir, pattern="*.vcf.gz$", full=TRUE))
 
-test_vcf = as.character(vcf.df$path[1])
 
-##read in vcf file(s)
-vcf <- readVcf(test_vcf, humie_ref)
+##read in everything but sample data for speediness
+vcf_param = ScanVcfParam(samples=NA)
+vcf <- readVcf("./ref_db/vcf_edit.vcf.gz", humie_ref, param=vcf_param)
 
-##data frame vcf info
-vcf.df = data.frame(name= as.character(head(names(rowData(vcf)))), chr = as.character(head(seqnames(vcf))), start = head(start(ranges(vcf))), end=as.integer(end(head(ranges(vcf)))),
-                    ref = as.character(head(ref(vcf))), alt = as.character(CharacterList(head(alt(vcf)))), kav_annots="NA")
+##data frame vcf info 
+vcf.df = cbind(chr= seqlevels(vcf), as.data.frame(ranges(vcf), stringsToFactors=FALSE), fixed(vcf), info(vcf))
+
+vcf.df = cbind(chr= seqlevels(vcf), as.data.frame(ranges(vcf), stringsToFactors=FALSE), 
+               ref=as.character(values(rowData(vcf))[["REF"]]), alt=values(rowData(vcf))[["ALT"]], info(vcf))
+
+##convert alt alleles to character for matching
+vcf.df$alt.value = as.character(vcf.df$alt.value)
+
 
 #################
 ## Match SNP's ##
 #################
-##generate list of identical matches, not including "alt"
-match1 = merge(kav.df, vcf.df, by=c("chr", "start", "end", "ref"))
-match1
-##compare alts (separate to account for lists)
-matches = unique(match1[unlist(sapply(match1$alt.x, grep, match1$alt.y)),])
-colnames(matches) = c("chr", "start", "end", "ref", "kav_name", "kav_alt", "vcf_name", "vcf_alt", "kav_AF", "kav_AC", "kav_AN", "kav_END", "kav_DS")
-matches
+match1 = data.frame(merge(vcf.df, kav.df, by=c("chr", "start", "end", "ref")))
 
-##for these guys
-vcf.df
+testing = head(data.frame(vcf_alt =match1$alt.value.x, kav_alt = match1$alt.value.y), 15)
 
-vcf.df[match(matches$vcf_name, vcf.df$name),]
-  
-kav.df[match(matches$kav_name, kav.df$name),]
+testing[pmatch(testing$vcf_alt, testing$kav_alt),]
+testing
 
-##add this
-
-colnames(kav.df)
+?pmatch
 
 
-##colnames info
-names(info(vcf))
-dim(info(vcf)) #170 26
+##keep matches with same alt allele
+matches = unique(match1[unlist(sapply(match1$ALT.x, grep, match1$ALT.y, fixed=TRUE)),])
+nots = unique(match1[unlist(sapply(match1$ALT.x, grep, match1$ALT.y, fixed=TRUE, invert=TRUE)),])
+
+data.frame(matches$ALT.x, matches$ALT.y)
+data.frame(nots$ALT.x, nots$ALT.y)
+
+
+
+##add column names
+colnames(matches) = c("chr", "start", "end", "ref", "vcf_name", "vcf_alt", "kav_name", "kav_alt", "AF", "AC", "AN", "END", "DS")
+
+?grep
+
+
+##add the kaviar fields for all matches
+vcf.df$AF = matches[match(vcf.df$name, matches$vcf_name),]$kav_AF
+vcf.df$AC = matches[match(vcf.df$name, matches$vcf_name),]$kav_AC
+vcf.df$AN = matches[match(vcf.df$name, matches$vcf_name),]$kav_AN
+vcf.df$END = matches[match(vcf.df$name, matches$vcf_name),]$kav_END
+vcf.df$DS = matches[match(vcf.df$name, matches$vcf_name),]$kav_DS
+
+vcf_annots = cbind(vcf.df$AF, vcf.df$AC)
+vcf_annots
+
+
 
 Add new variables with the info<- setter.
 
-newInfo <- info(vcf)
-newInfo$foo <- 1:5
-info(vcf) <- newInfo
-names(info(vcf))
-info(vcf)$foo
+> newInfo <- info(vcf)
+> newInfo$foo <- 1:5
+> info(vcf) <- newInfo
+> names(info(vcf))
+[1] "NS"  "DP"  "AF"  "AA"  "DB"  "H2"  "foo"
+> info(vcf)$foo
+[1] 1 2 3 4 5
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -156,7 +180,12 @@ tab = TabixFile("/Users/selasady/snp_annotato.R/ref_db/Kaviar.vcf.gz", idx)
 rng <- GRanges(seqnames="1", ranges=IRanges(start=c(39998057, 39998057), end=c(39999366, 39999366)))
 kav_ranged = readVcf(tab, "hg19", param=rng)
 ranges(kav_ranged)
-writeVcf(kav_ranged, filename="/Users/selasady/snp_annotato.R/Kav_ranged.vcf")
+
+ranges(kaviar)
+alt(kaviar)[1] = "A,TT"
+head(alt(kaviar))
+
+writeVcf(kaviar, filename="/Documents/snp_annotato.R/ref_db/kaviar_comma.vcf.gz")
 
 
 
